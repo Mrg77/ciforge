@@ -1,0 +1,6 @@
+# built binary
+/ciforge
+/dist/
+
+# local audit log
+*.jsonl
