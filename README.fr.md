@@ -63,6 +63,12 @@ ciforge "audite mes workflows et épingle toutes les actions tierces"
 ciforge "migre le workflow de déploiement des clés AWS vers OIDC"
 ```
 
+Le modèle par défaut est `claude-sonnet-5` — la boucle d'agent fait beaucoup
+d'allers-retours d'outils et paie chacun, donc c'est la capacité par token qui
+compte. `CIFORGE_MODEL=claude-opus-5` sur `audit . --explain` ou `fix` achète un
+meilleur jugement pour quelques centimes, puisque ces commandes ne font qu'un
+appel et produisent du code qu'un humain va appliquer.
+
 ## La garde
 
 Un fichier de workflow est le chemin le plus court vers la production. Un agent qui

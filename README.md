@@ -168,8 +168,14 @@ tokens priced per run:
 ```sh
 CIFORGE_AUDIT=off ciforge "..."        # no file; the summary still prints
 CIFORGE_MAX_COST=0.50 ciforge "..."    # stop before exceeding 0.50 USD
-CIFORGE_MODEL=claude-haiku-4-5 ciforge "..."
+CIFORGE_MODEL=claude-haiku-4-5 ciforge "..."     # cheaper agent loop
+CIFORGE_MODEL=claude-opus-5 ciforge audit . --explain   # better one-shot judgement
 ```
+
+The default is `claude-sonnet-5`. The agent loop makes many tool round trips and
+pays for each, so capability per token is what matters there; `--explain` and
+`fix` make a single call and produce code someone will apply, so Opus is worth
+its price on exactly those.
 
 ## Honesty
 
