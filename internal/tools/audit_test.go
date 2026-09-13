@@ -40,7 +40,7 @@ jobs:
     steps:
       - uses: dorny/paths-filter@v3
 `)
-	if !strings.Contains(out, "action-not-pinned") || !strings.Contains(out, "[HIGH]") {
+	if !strings.Contains(out, "action-not-pinned") || !strings.Contains(out, "HIGH") {
 		t.Fatalf("a tag-pinned third-party action must be a high finding, got:\n%s", out)
 	}
 }
@@ -85,7 +85,7 @@ jobs:
 	if !strings.Contains(out, "action-not-pinned") {
 		t.Fatal("a tag-pinned first-party action should still be reported")
 	}
-	if strings.Contains(out, "[HIGH] ") && strings.Contains(out, "actions/checkout") {
+	if strings.Contains(out, "HIGH") && strings.Contains(out, "actions/checkout") {
 		t.Fatalf("a GitHub-maintained action should not be high severity, got:\n%s", out)
 	}
 }

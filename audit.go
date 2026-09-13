@@ -17,6 +17,7 @@ import (
 func runAudit(args []string) int {
 	fs := flag.NewFlagSet("audit", flag.ExitOnError)
 	failOn := fs.String("fail-on", "high", "Exit non-zero at this severity or above: high, medium, low, none.")
+	asJSON := fs.Bool("json", false, "Emit findings as JSON, for aggregation by another tool.")
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, `ciforge audit — deterministic workflow audit (no LLM, no API key).
 
@@ -31,26 +32,35 @@ Flags:`)
 	wd, _ := os.Getwd()
 	tools.SetProjectRoot(wd)
 
-	out, err := tools.AuditTool{}.Run(context.Background(), json.RawMessage(`{}`))
+	findings, err := tools.Audit()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "ciforge audit:", err)
 		return 2
 	}
-	fmt.Println(out)
+	if *asJSON {
+		out, _ := json.MarshalIndent(map[string]any{
+			"tool":         "ciforge",
+			"findings":     findings,
+			"count":        len(findings),
+			"max_severity": tools.MaxSeverity(findings),
+		}, "", "  ")
+		fmt.Println(string(out))
+	} else {
+		fmt.Print(tools.Render("workflow_audit", findings))
+	}
 
-	switch strings.ToLower(*failOn) {
-	case "none":
+	// Decide on counts, never by grepping the rendered text: the report is
+	// coloured, and a gate must not depend on how something is displayed.
+	rank := map[string]int{"low": 1, "medium": 2, "high": 3}
+	threshold := rank[strings.ToLower(*failOn)]
+	if strings.EqualFold(*failOn, "none") {
 		return 0
-	case "low":
-		if strings.Contains(out, "[LOW]") || strings.Contains(out, "[MEDIUM]") || strings.Contains(out, "[HIGH]") {
-			return 1
-		}
-	case "medium":
-		if strings.Contains(out, "[MEDIUM]") || strings.Contains(out, "[HIGH]") {
-			return 1
-		}
-	default:
-		if strings.Contains(out, "[HIGH]") {
+	}
+	if threshold == 0 {
+		threshold = rank["high"]
+	}
+	for _, f := range findings {
+		if rank[f.Severity] >= threshold {
 			return 1
 		}
 	}

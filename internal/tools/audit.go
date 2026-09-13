@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -12,12 +13,14 @@ import (
 
 // Finding is one issue with enough context to act on it.
 type Finding struct {
-	Severity string
-	File     string
-	Job      string
-	Rule     string
-	Message  string
-	Fix      string
+	Severity string `json:"severity,omitempty"`
+	File     string `json:"file,omitempty"`
+	Line     int    `json:"line,omitempty"` // 1-based; 0 when the finding is about the file as a whole
+	Job      string `json:"job,omitempty"`
+	Rule     string `json:"rule,omitempty"`
+	Message  string `json:"message,omitempty"`
+	Fix      string `json:"fix,omitempty"`
+	Detail   string `json:"detail,omitempty"` // what exactly, e.g. the action reference — shown next to the location
 }
 
 var (
@@ -51,6 +54,45 @@ func (AuditTool) Schema() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false}
 }
 
+// Audit runs the deterministic checks and returns the findings, so a caller can
+// decide an exit code on counts rather than by grepping coloured text.
+func Audit() ([]Finding, error) {
+	root := projectRoot
+	if root == "" {
+		root, _ = filepath.Abs(".")
+	}
+	files, err := workflowFiles(root)
+	if err != nil || len(files) == 0 {
+		return nil, nil
+	}
+	var findings []Finding
+	for _, f := range files {
+		rel, _ := filepath.Rel(root, f)
+		w, err := parse(f)
+		if err != nil {
+			findings = append(findings, Finding{
+				Severity: "high", File: rel, Rule: "unparseable",
+				Message: err.Error(), Fix: "Fix the YAML — a workflow that does not parse does not run.",
+			})
+			continue
+		}
+		findings = append(findings, auditWorkflow(rel, w)...)
+	}
+	return findings, nil
+}
+
+// MaxSeverity returns the worst severity present, or "" for none.
+func MaxSeverity(fs []Finding) string {
+	worst := ""
+	rank := map[string]int{"low": 1, "medium": 2, "high": 3}
+	for _, f := range fs {
+		if rank[f.Severity] > rank[worst] {
+			worst = f.Severity
+		}
+	}
+	return worst
+}
+
 func (AuditTool) Run(_ context.Context, _ json.RawMessage) (string, error) {
 	root := projectRoot
 	if root == "" {
@@ -74,7 +116,7 @@ func (AuditTool) Run(_ context.Context, _ json.RawMessage) (string, error) {
 		}
 		findings = append(findings, auditWorkflow(rel, w)...)
 	}
-	return report(findings), nil
+	return Render("workflow_audit", findings), nil
 }
 
 func auditWorkflow(file string, w *workflow) []Finding {
@@ -138,12 +180,17 @@ func auditStep(file, jobName string, s step, hasPRTarget bool) []Finding {
 			extra := ""
 			if firstPartyOwners[owner] {
 				sev = "low"
-				extra = " (GitHub-maintained: lower risk, not zero)"
+				extra = "first-party"
+			}
+			msg := "An action is pinned to a tag. A tag is a pointer: whoever controls the action's repository — or compromises the maintainer's account — can move it to different code, and your pipeline runs it on the next push with no diff in yours."
+			if extra != "" {
+				msg = "A GitHub-maintained action is pinned to a tag. Lower risk than a third-party one, not zero: a tag can still be moved."
 			}
 			out = append(out, Finding{
-				Severity: sev, File: file, Job: jobName, Rule: "action-not-pinned",
-				Message: fmt.Sprintf("`%s` is pinned to a tag%s. A tag is a pointer: whoever controls the repository — or compromises the maintainer's account — can move it to different code, and your pipeline runs it with no diff in yours.", s.Uses, extra),
-				Fix:     "Pin to the full commit SHA and keep the tag as a trailing comment: `uses: owner/action@<40-hex sha> # v4.1.0`.",
+				Severity: sev, File: file, Line: lineOf(file, s.Uses), Job: jobName,
+				Rule: "action-not-pinned", Detail: s.Uses,
+				Message: msg,
+				Fix:     "Pin to the full commit SHA, keeping the tag as a trailing comment: `uses: owner/action@<40-hex sha> # v4.1.0`. `ciforge pin` prints the exact replacement lines.",
 			})
 		}
 
@@ -154,7 +201,7 @@ func auditStep(file, jobName string, s step, hasPRTarget bool) []Finding {
 				r := fmt.Sprint(ref)
 				if strings.Contains(r, "head") || strings.Contains(r, "pull_request") {
 					out = append(out, Finding{
-						Severity: "high", File: file, Job: jobName, Rule: "pr-target-checkout",
+						Severity: "high", File: file, Line: lineOf(file, s.Uses), Job: jobName, Rule: "pr-target-checkout",
 						Message: "`pull_request_target` runs with repository secrets and this step checks out the PR's own code. Anyone can open a pull request; that code then executes with access to your secrets.",
 						Fix:     "Use `pull_request` for anything that builds fork code. If you genuinely need pull_request_target, do not check out the PR head, and never expose secrets to a job that does.",
 					})
@@ -165,7 +212,7 @@ func auditStep(file, jobName string, s step, hasPRTarget bool) []Finding {
 
 	if s.Run != "" && scriptInjection.MatchString(s.Run) {
 		out = append(out, Finding{
-			Severity: "high", File: file, Job: jobName, Rule: "script-injection",
+			Severity: "high", File: file, Line: lineOf(file, firstLine(s.Run)), Job: jobName, Rule: "script-injection",
 			Message: "Event data is interpolated directly into a shell command. A PR title or branch name is attacker-controlled input; inside `run:` it becomes code.",
 			Fix:     "Pass it through `env:` and reference the environment variable in the script, quoted. Never interpolate `${{ github.event.* }}` into a shell line.",
 		})
@@ -178,7 +225,7 @@ func auditStep(file, jobName string, s step, hasPRTarget bool) []Finding {
 		lk := strings.ReplaceAll(strings.ToLower(k), "-", "_")
 		if strings.Contains(lk, "secret_access_key") || lk == "aws_access_key_id" {
 			out = append(out, Finding{
-				Severity: "high", File: file, Job: jobName, Rule: "long-lived-credentials",
+				Severity: "high", File: file, Line: lineOf(file, k), Job: jobName, Rule: "long-lived-credentials",
 				Message: "A long-lived cloud key is passed to this step. It sits in repository secrets until someone rotates it, which nobody does.",
 				Fix:     "Switch to OIDC: `permissions: id-token: write` plus role-to-assume. Restrict the role's trust policy to this repository AND branch — a wildcard `repo:*` hands the role to every repo in the org.",
 			})
@@ -187,7 +234,7 @@ func auditStep(file, jobName string, s step, hasPRTarget bool) []Finding {
 	for k := range s.Env {
 		if strings.Contains(strings.ReplaceAll(strings.ToLower(k), "-", "_"), "secret_access_key") {
 			out = append(out, Finding{
-				Severity: "high", File: file, Job: jobName, Rule: "long-lived-credentials",
+				Severity: "high", File: file, Line: lineOf(file, k), Job: jobName, Rule: "long-lived-credentials",
 				Message: "A long-lived cloud key is exposed as an environment variable.",
 				Fix:     "Switch to OIDC and delete the stored key.",
 			})
@@ -197,35 +244,6 @@ func auditStep(file, jobName string, s step, hasPRTarget bool) []Finding {
 	return out
 }
 
-func report(findings []Finding) string {
-	if len(findings) == 0 {
-		return "workflow_audit: no findings. (Deterministic checks only — a clean audit is not a proof of safety.)"
-	}
-	order := map[string]int{"high": 0, "medium": 1, "low": 2}
-	sort.SliceStable(findings, func(i, j int) bool {
-		if order[findings[i].Severity] != order[findings[j].Severity] {
-			return order[findings[i].Severity] < order[findings[j].Severity]
-		}
-		return findings[i].File < findings[j].File
-	})
-	counts := map[string]int{}
-	for _, f := range findings {
-		counts[f.Severity]++
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "workflow_audit: %d finding(s) — %d high, %d medium, %d low\n\n",
-		len(findings), counts["high"], counts["medium"], counts["low"])
-	for _, f := range findings {
-		loc := f.File
-		if f.Job != "" {
-			loc += " · job " + f.Job
-		}
-		fmt.Fprintf(&b, "[%s] %s  (%s)\n  %s\n  fix: %s\n\n",
-			strings.ToUpper(f.Severity), loc, f.Rule, f.Message, f.Fix)
-	}
-	return truncate(b.String(), 14000)
-}
-
 func contains(hay []string, needle string) bool {
 	for _, h := range hay {
 		if h == needle {
@@ -233,4 +251,36 @@ func contains(hay []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+// lineOf finds the 1-based line where needle appears in a workflow file, so a
+// finding points at file:line — clickable in a terminal, jumpable in an editor.
+// Returns 0 when it cannot be located, and the renderer then shows the file alone
+// rather than an invented line.
+func lineOf(relPath, needle string) int {
+	root := projectRoot
+	if root == "" {
+		root, _ = filepath.Abs(".")
+	}
+	b, err := os.ReadFile(filepath.Join(root, relPath))
+	if err != nil || needle == "" {
+		return 0
+	}
+	for i, line := range strings.Split(string(b), "\n") {
+		if strings.Contains(line, needle) {
+			return i + 1
+		}
+	}
+	return 0
+}
+
+// firstLine returns the first non-empty line of a multi-line run: block, which
+// is what lineOf can search for.
+func firstLine(s string) string {
+	for _, l := range strings.Split(s, "\n") {
+		if t := strings.TrimSpace(l); t != "" {
+			return t
+		}
+	}
+	return ""
 }
