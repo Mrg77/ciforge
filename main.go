@@ -78,9 +78,18 @@ func main() {
 
 Usage:
   ciforge "<task>"           run the agent on a task
-  ciforge audit [--fail-on]  deterministic workflow audit (no LLM, no API key)
-  ciforge pin                show the SHA for every tag-pinned action
+  ciforge scan               gate the workflows — deterministic, no API key, exits 1 on a high finding
+  ciforge audit              report every workflow — deterministic, report-only by default
+  ciforge fix                fix what is mechanical, then re-check (costs tokens)
+  ciforge pin                the commit SHA for every tag-pinned action (no API key)
   ciforge version
+
+Shared flags on scan/audit/fix:
+  --json                     machine-readable, for aggregation
+  --html [--out FILE]        self-contained HTML report (no JavaScript)
+  --explain                  add prose and a real before/after per finding (costs tokens)
+  --fail-on <severity>       critical | high | medium | low | info | none
+  --top N                    show only the N worst problems
 
 Environment:
   ANTHROPIC_API_KEY          required for agent runs
@@ -90,9 +99,11 @@ Environment:
   CIFORGE_AUDIT              audit log path, or "off"
 
 Examples:
-  ciforge "audit my workflows and pin every third-party action"
-  ciforge "reduce permissions to the minimum each job needs"
-  ciforge audit --fail-on high`)
+  ciforge scan                          # the CI gate
+  ciforge audit --html --out ci.html
+  ciforge audit --explain               # with before/after diffs
+  ciforge fix --diff                    # repair, then re-check
+  ciforge "migrate the deploy workflow from AWS keys to OIDC"`)
 		os.Exit(2)
 	}
 
@@ -100,10 +111,14 @@ Examples:
 	case "version", "--version", "-v":
 		fmt.Println("ciforge", version)
 		return
+	// The family contract, identical in tfforge and ansforge: scan gates, audit
+	// reports, fix repairs. The first two are deterministic and free.
+	case "scan":
+		os.Exit(runScan(os.Args[2:]))
 	case "audit":
-		// Deterministic: no LLM, no API key, same verdict every time. That is
-		// what lets it gate a pipeline — unlike the agent, which advises.
 		os.Exit(runAudit(os.Args[2:]))
+	case "fix":
+		os.Exit(runFix(os.Args[2:]))
 	case "pin":
 		os.Exit(runPin(os.Args[2:]))
 	}

@@ -9,19 +9,13 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/Mrg77/ciforge/internal/report"
 )
 
-// Finding is one issue with enough context to act on it.
-type Finding struct {
-	Severity string `json:"severity,omitempty"`
-	File     string `json:"file,omitempty"`
-	Line     int    `json:"line,omitempty"` // 1-based; 0 when the finding is about the file as a whole
-	Job      string `json:"job,omitempty"`
-	Rule     string `json:"rule,omitempty"`
-	Message  string `json:"message,omitempty"`
-	Fix      string `json:"fix,omitempty"`
-	Detail   string `json:"detail,omitempty"` // what exactly, e.g. the action reference — shown next to the location
-}
+// Finding is an alias of the shared type: every tool in the family emits the
+// same shape, which is what lets one report aggregate the three.
+type Finding = report.Finding
 
 var (
 	// A third-party action pinned to a tag or branch rather than a SHA.
@@ -71,7 +65,7 @@ func Audit() ([]Finding, error) {
 		w, err := parse(f)
 		if err != nil {
 			findings = append(findings, Finding{
-				Severity: "high", File: rel, Rule: "unparseable",
+				Severity: report.High, Category: "syntax", File: rel, Rule: "unparseable",
 				Message: err.Error(), Fix: "Fix the YAML — a workflow that does not parse does not run.",
 			})
 			continue
@@ -79,18 +73,6 @@ func Audit() ([]Finding, error) {
 		findings = append(findings, auditWorkflow(rel, w)...)
 	}
 	return findings, nil
-}
-
-// MaxSeverity returns the worst severity present, or "" for none.
-func MaxSeverity(fs []Finding) string {
-	worst := ""
-	rank := map[string]int{"low": 1, "medium": 2, "high": 3}
-	for _, f := range fs {
-		if rank[f.Severity] > rank[worst] {
-			worst = f.Severity
-		}
-	}
-	return worst
 }
 
 func (AuditTool) Run(_ context.Context, _ json.RawMessage) (string, error) {
@@ -109,14 +91,15 @@ func (AuditTool) Run(_ context.Context, _ json.RawMessage) (string, error) {
 		w, err := parse(f)
 		if err != nil {
 			findings = append(findings, Finding{
-				Severity: "high", File: rel, Rule: "unparseable",
+				Severity: report.High, Category: "syntax", File: rel, Rule: "unparseable",
 				Message: err.Error(), Fix: "Fix the YAML — a workflow that does not parse does not run.",
 			})
 			continue
 		}
 		findings = append(findings, auditWorkflow(rel, w)...)
 	}
-	return Render("workflow_audit", findings), nil
+	r := &report.Report{Tool: "ciforge", Subject: "workflows", Findings: findings}
+	return r.Text(0), nil
 }
 
 func auditWorkflow(file string, w *workflow) []Finding {
@@ -128,13 +111,13 @@ func auditWorkflow(file string, w *workflow) []Finding {
 	// usually write. Almost no workflow needs to write to the repo.
 	if w.Permissions == nil {
 		out = append(out, Finding{
-			Severity: "medium", File: file, Rule: "permissions-unset",
+			Severity: report.Medium, Category: "permissions", File: file, Rule: "permissions-unset",
 			Message: "No top-level `permissions:` — the job token inherits the repository default, often write access to the repo.",
 			Fix:     "Add `permissions: contents: read` at workflow level, then raise only what a specific job needs.",
 		})
 	} else if p, ok := w.Permissions.(string); ok && p == "write-all" {
 		out = append(out, Finding{
-			Severity: "high", File: file, Rule: "permissions-write-all",
+			Severity: report.High, Category: "permissions", File: file, Rule: "permissions-write-all",
 			Message: "`permissions: write-all` grants every scope to every job.",
 			Fix:     "Replace with `contents: read` and grant individual scopes per job.",
 		})
@@ -144,7 +127,7 @@ func auditWorkflow(file string, w *workflow) []Finding {
 	// them already obsolete.
 	if w.Concurrency == nil && (contains(trigs, "push") || contains(trigs, "pull_request")) {
 		out = append(out, Finding{
-			Severity: "low", File: file, Rule: "no-concurrency",
+			Severity: report.Low, Category: "cost", File: file, Rule: "no-concurrency",
 			Message: "No concurrency group: successive pushes run overlapping pipelines, and the stale ones still bill minutes.",
 			Fix:     "Add a concurrency group keyed on the ref, with cancel-in-progress for non-default branches.",
 		})
@@ -187,7 +170,8 @@ func auditStep(file, jobName string, s step, hasPRTarget bool) []Finding {
 				msg = "A GitHub-maintained action is pinned to a tag. Lower risk than a third-party one, not zero: a tag can still be moved."
 			}
 			out = append(out, Finding{
-				Severity: sev, File: file, Line: lineOf(file, s.Uses), Job: jobName,
+				Severity: report.Severity(sev), Category: "supply-chain",
+				File: file, Line: lineOf(file, s.Uses), Scope: jobName,
 				Rule: "action-not-pinned", Detail: s.Uses,
 				Message: msg,
 				Fix:     "Pin to the full commit SHA, keeping the tag as a trailing comment: `uses: owner/action@<40-hex sha> # v4.1.0`. `ciforge pin` prints the exact replacement lines.",
@@ -201,7 +185,7 @@ func auditStep(file, jobName string, s step, hasPRTarget bool) []Finding {
 				r := fmt.Sprint(ref)
 				if strings.Contains(r, "head") || strings.Contains(r, "pull_request") {
 					out = append(out, Finding{
-						Severity: "high", File: file, Line: lineOf(file, s.Uses), Job: jobName, Rule: "pr-target-checkout",
+						Severity: report.High, Category: "supply-chain", File: file, Line: lineOf(file, s.Uses), Scope: jobName, Rule: "pr-target-checkout",
 						Message: "`pull_request_target` runs with repository secrets and this step checks out the PR's own code. Anyone can open a pull request; that code then executes with access to your secrets.",
 						Fix:     "Use `pull_request` for anything that builds fork code. If you genuinely need pull_request_target, do not check out the PR head, and never expose secrets to a job that does.",
 					})
@@ -212,7 +196,7 @@ func auditStep(file, jobName string, s step, hasPRTarget bool) []Finding {
 
 	if s.Run != "" && scriptInjection.MatchString(s.Run) {
 		out = append(out, Finding{
-			Severity: "high", File: file, Line: lineOf(file, firstLine(s.Run)), Job: jobName, Rule: "script-injection",
+			Severity: report.High, Category: "supply-chain", File: file, Line: lineOf(file, firstLine(s.Run)), Scope: jobName, Rule: "script-injection",
 			Message: "Event data is interpolated directly into a shell command. A PR title or branch name is attacker-controlled input; inside `run:` it becomes code.",
 			Fix:     "Pass it through `env:` and reference the environment variable in the script, quoted. Never interpolate `${{ github.event.* }}` into a shell line.",
 		})
@@ -225,7 +209,7 @@ func auditStep(file, jobName string, s step, hasPRTarget bool) []Finding {
 		lk := strings.ReplaceAll(strings.ToLower(k), "-", "_")
 		if strings.Contains(lk, "secret_access_key") || lk == "aws_access_key_id" {
 			out = append(out, Finding{
-				Severity: "high", File: file, Line: lineOf(file, k), Job: jobName, Rule: "long-lived-credentials",
+				Severity: report.High, Category: "secrets", File: file, Line: lineOf(file, k), Scope: jobName, Rule: "long-lived-credentials",
 				Message: "A long-lived cloud key is passed to this step. It sits in repository secrets until someone rotates it, which nobody does.",
 				Fix:     "Switch to OIDC: `permissions: id-token: write` plus role-to-assume. Restrict the role's trust policy to this repository AND branch — a wildcard `repo:*` hands the role to every repo in the org.",
 			})
@@ -234,7 +218,7 @@ func auditStep(file, jobName string, s step, hasPRTarget bool) []Finding {
 	for k := range s.Env {
 		if strings.Contains(strings.ReplaceAll(strings.ToLower(k), "-", "_"), "secret_access_key") {
 			out = append(out, Finding{
-				Severity: "high", File: file, Line: lineOf(file, k), Job: jobName, Rule: "long-lived-credentials",
+				Severity: report.High, Category: "secrets", File: file, Line: lineOf(file, k), Scope: jobName, Rule: "long-lived-credentials",
 				Message: "A long-lived cloud key is exposed as an environment variable.",
 				Fix:     "Switch to OIDC and delete the stored key.",
 			})
