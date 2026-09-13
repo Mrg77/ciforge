@@ -33,6 +33,19 @@ de workflow passe par une **policy-as-code** ; déclencher un pipeline est refus
 Les actions `actions/*` sont rapportées en **basse** sévérité : un risque moindre,
 pas nul. Noyer un vrai risque sous cinquante avertissements revient à le cacher.
 
+## Installer
+
+```sh
+# Homebrew
+brew install mrg77/tap/ciforge
+
+# ou l'installeur (Linux, macOS)
+curl -fsSL https://raw.githubusercontent.com/Mrg77/ciforge/main/install.sh | sh
+
+# ou avec Go
+go install github.com/Mrg77/ciforge@latest
+```
+
 ## Utiliser
 
 Déterministe, sans clé API — c'est cette commande qui va dans la CI :

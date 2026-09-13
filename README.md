@@ -39,6 +39,13 @@ hiding it.
 ## Install
 
 ```sh
+# Homebrew
+brew install mrg77/tap/ciforge
+
+# or the installer (Linux, macOS)
+curl -fsSL https://raw.githubusercontent.com/Mrg77/ciforge/main/install.sh | sh
+
+# or with Go
 go install github.com/Mrg77/ciforge@latest
 ```
 
