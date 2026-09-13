@@ -36,6 +36,34 @@ First-party `actions/*` are reported at **low** severity rather than high: a low
 risk, not a null one. Burying a real finding under fifty notices is the same as
 hiding it.
 
+## The family contract
+
+`tfforge`, `ansforge` and `ciforge` look at different things and behave the same
+way, so learning one means knowing the others:
+
+| Command | What it does | Costs tokens |
+|---|---|---|
+| `ciforge "<task>"` | the agent, on a task you describe | yes |
+| `ciforge scan` | gate one scope — same verdict every time | no |
+| `ciforge audit` | report the whole tree, report-only by default | no |
+| `ciforge fix` | repair findings, then re-check with the deterministic rules | yes |
+| `ciforge version` | | no |
+
+Shared flags on `scan`, `audit` and `fix`:
+
+| Flag | Effect |
+|---|---|
+| `--json` | machine-readable, so one report can aggregate all three tools |
+| `--html [--out FILE]` | a self-contained page: CSS-only tabs, no JavaScript, no external assets, light and dark |
+| `--explain` | one batched AI call adding prose and a real before/after per finding — **the only flag that costs tokens** |
+| `--fail-on <sev>` | `critical` \| `high` \| `medium` \| `low` \| `info` \| `none` |
+| `--top N` | show only the N worst problems |
+
+Why deterministic and agentic are separate commands rather than one clever
+entry point: a gate must return the same verdict on the same input, today and
+in a year. A model cannot promise that. So the free half decides, and the paid
+half advises.
+
 ## Install
 
 ```sh
@@ -51,24 +79,26 @@ go install github.com/Mrg77/ciforge@latest
 
 ## Use
 
-Deterministic, no API key — this is the one that belongs in CI:
-
 ```sh
-ciforge audit                  # exits 1 on a high finding
-ciforge audit --fail-on medium
-ciforge pin                    # the SHA for every tag-pinned action
-```
+# free, deterministic — no API key needed
+ciforge scan                             # the CI gate: exits 1 on a high finding
+ciforge audit                            # report every workflow, report-only
+ciforge audit --html --out ci.html
+ciforge pin                              # the SHA for every tag-pinned action
 
-With the agent:
-
-```sh
+# costs tokens
 export ANTHROPIC_API_KEY=...
-export GITHUB_TOKEN=...        # raises the API rate limit when resolving SHAs
-
-ciforge "audit my workflows and pin every third-party action"
-ciforge "reduce permissions to the minimum each job needs"
+export GITHUB_TOKEN=...                  # raises the API rate limit when resolving SHAs
+ciforge audit --explain                  # adds prose + a real before/after per finding
+ciforge fix --diff                       # repairs what is mechanical, then re-checks
 ciforge "migrate the deploy workflow from AWS keys to OIDC"
 ```
+
+`fix` is deliberately narrow: it pins actions (using `pin`, never a SHA it
+invented), narrows `permissions`, adds a concurrency group — and reports
+everything else for a human. It will not touch a deploy or release workflow,
+because the guard refuses it; that is the policy working, not a limitation to
+route around. It never triggers a run.
 
 ## The tools
 
