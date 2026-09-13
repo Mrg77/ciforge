@@ -82,6 +82,7 @@ Usage:
   ciforge audit              report every workflow — deterministic, report-only by default
   ciforge fix                fix what is mechanical, then re-check (costs tokens)
   ciforge pin                the commit SHA for every tag-pinned action (no API key)
+  ciforge mcp                serve the read-only checks to an assistant (MCP, stdio)
   ciforge version
 
 Shared flags on scan/audit/fix:
@@ -121,6 +122,10 @@ Examples:
 		os.Exit(runFix(os.Args[2:]))
 	case "pin":
 		os.Exit(runPin(os.Args[2:]))
+	case "mcp":
+		// Serve the read-only checks to an assistant over stdio. fix and the
+		// agent stay out: see internal/mcp.
+		os.Exit(runMCP(os.Args[2:]))
 	}
 
 	task := strings.Join(os.Args[1:], " ")

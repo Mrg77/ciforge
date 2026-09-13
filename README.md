@@ -112,6 +112,27 @@ route around. It never triggers a run.
 | `read_file` | Look before editing |
 | `edit_file` / `write_file` | **Gated** — a workflow is the deploy path |
 
+## As an MCP server
+
+`ciforge mcp` serves the deterministic checks over the Model Context Protocol, so
+an assistant can call them directly instead of shelling out and parsing text.
+
+```json
+{
+  "mcpServers": {
+    "ciforge": { "command": "ciforge", "args": ["mcp"] }
+  }
+}
+```
+
+Exposed: `workflow_audit, workflow_pin` — read-only, free, and safe to call repeatedly.
+
+**Not exposed: `fix`, the agent, anything that writes.** An MCP server is driven
+by a model, usually without a human approving each call. Exposing a tool that
+edits files would hand an agent the capability the guards exist to withhold, and
+through a channel where the policy never runs. The server offers what changes
+nothing.
+
 ## The guard
 
 A workflow file is the shortest path to production. An agent that can rewrite one
