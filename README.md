@@ -102,6 +102,11 @@ route around. It never triggers a run.
 
 ## The tools
 
+These are the agent's own tools — what it can reach while it works, behind the
+guard. They are **not** the MCP surface: an assistant connected over MCP gets the
+read-only subset listed under [As an MCP server](#as-an-mcp-server), and nothing
+that writes.
+
 | Tool | What it does |
 |---|---|
 | `workflow_list` | Triggers, permissions, jobs — read the ground first |
@@ -139,7 +144,14 @@ have installed ciforge too. Claude Code asks for approval the first time it sees
 `.mcp.json` it has not been shown before, so a cloned repository cannot start a
 process behind your back. Check it with `claude mcp list`, or `/mcp` in session.
 
-Exposed: `workflow_audit, workflow_pin` — read-only, free, and safe to call repeatedly.
+Two tools are exposed, both read-only and safe to call repeatedly. Neither takes
+an argument: they work on every workflow in the repository the server was started
+in.
+
+| Tool | What it covers |
+|---|---|
+| `workflow_audit` | Every workflow — pinning, `pull_request_target`, event data in `run:`, permissions, long-lived credentials. Free, offline. |
+| `workflow_pin` | Resolves each tag-pinned action to its commit SHA and returns the exact replacement lines. **Reads the GitHub API; writes nothing** — so it needs network, and unauthenticated calls are rate-limited. |
 
 **Not exposed: `fix`, the agent, anything that writes.** An MCP server is driven
 by a model, usually without a human approving each call. Exposing a tool that

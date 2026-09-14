@@ -123,8 +123,14 @@ voit un `.mcp.json` qu'on ne lui a pas encore montré : un dépôt cloné ne peu
 pas lancer un processus dans ton dos. Vérifie avec `claude mcp list`, ou `/mcp`
 en session.
 
-Exposé : `workflow_audit, workflow_pin` — lecture seule, gratuit, sans effet de bord même appelé
-en boucle.
+Deux outils sont exposés, en lecture seule et sans effet de bord même appelés en
+boucle. Aucun ne prend d'argument : ils travaillent sur tous les workflows du
+dépôt où le serveur a été lancé.
+
+| Outil | Ce qu'il couvre |
+|---|---|
+| `workflow_audit` | Tous les workflows — épinglage, `pull_request_target`, données d'événement dans un `run:`, permissions, credentials longue durée. Gratuit, hors-ligne. |
+| `workflow_pin` | Résout chaque action épinglée sur un tag vers son SHA de commit et renvoie les lignes de remplacement exactes. **Lit l'API GitHub ; n'écrit rien** — il lui faut donc le réseau, et les appels non authentifiés sont rate-limités. |
 
 **Non exposé : `fix`, l'agent, tout ce qui écrit.** Un serveur MCP est piloté par un modèle,
 le plus souvent sans qu'un humain approuve chaque appel. Exposer un outil qui
