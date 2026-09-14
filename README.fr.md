@@ -92,6 +92,46 @@ oublie : la politique de confiance du rôle doit être restreinte au dépôt **e
 branche ou l'environnement. Un sujet avec joker donne le rôle à tous les dépôts de
 l'organisation, ce qui annule l'intérêt de la migration.
 
+## En serveur MCP
+
+`ciforge mcp [racine]` sert les contrôles déterministes via le Model Context
+Protocol : un assistant les appelle directement au lieu de lancer un shell et de
+parser du texte. `racine` est le dossier pris par défaut — omets-le pour le
+dossier courant.
+
+Installe d'abord le binaire (voir plus haut) : le serveur *est* ce binaire, il n'y
+a rien d'autre à télécharger, et surtout pas le dépôt. Puis, depuis le dépôt à
+analyser :
+
+```sh
+claude mcp add -s project ciforge -- ciforge mcp
+```
+
+ce qui écrit `.mcp.json` à la racine du dépôt :
+
+```json
+{
+  "mcpServers": {
+    "ciforge": { "command": "ciforge", "args": ["mcp"] }
+  }
+}
+```
+
+Commite ce fichier et toute l'équipe a les mêmes outils — à condition d'avoir
+installé ciforge aussi. Claude Code demande une approbation la première fois qu'il
+voit un `.mcp.json` qu'on ne lui a pas encore montré : un dépôt cloné ne peut donc
+pas lancer un processus dans ton dos. Vérifie avec `claude mcp list`, ou `/mcp`
+en session.
+
+Exposé : `workflow_audit, workflow_pin` — lecture seule, gratuit, sans effet de bord même appelé
+en boucle.
+
+**Non exposé : `fix`, l'agent, tout ce qui écrit.** Un serveur MCP est piloté par un modèle,
+le plus souvent sans qu'un humain approuve chaque appel. Exposer un outil qui
+écrit reviendrait à donner à un agent la capacité que les gardes existent
+justement pour retenir, et par un canal où la politique ne s'exécute jamais. Le
+serveur n'offre que ce qui ne change rien.
+
 ## Honnêteté
 
 - Si `actionlint` manque ou si l'API GitHub limite, ciforge dit que le contrôle
